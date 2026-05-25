@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberGuard | Traffic Vision</title>
+    <!-- Use Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=3">
+</head>
+<body>
+    <div class="app-container single-frame">
+        <!-- Dashboard Content Grid -->
+        <main class="dashboard-grid">
+            
+            <!-- COLUMN 1: Live Camera Feed -->
+            <section class="video-section glass">
+                <div class="video-header">
+                    <h2>Live Camera Feed</h2>
+                    <div class="status-indicator">
+                        <span class="dot pulse"></span> Live
+                    </div>
+                </div>
+                <div class="video-wrapper">
+                    <img id="video-stream" src="/video_feed" alt="Live Traffic Feed">
+                </div>
+            </section>
+
+            <!-- COLUMN 2: Traffic Density & Breakdown -->
+            <section class="column-mid">
+                <!-- Density Metrics -->
+                <div class="metrics-card glass">
+                    <h2>Traffic Density</h2>
+                    <div class="metric-value">
+                        <span id="vehicle-count">0</span>
+                        <span class="unit">vehicles</span>
+                    </div>
+                    <div id="congestion-warning" class="warning-banner hidden">
+                        ⚠️ High Congestion
+                    </div>
+                </div>
+
+                <!-- Vehicle Type Breakdown -->
+                <div class="metrics-card glass flex-grow">
+                    <h2>Total Tracked</h2>
+                    <div class="metric-value small-gap">
+                        <span id="total-vehicles">0</span>
+                        <span class="unit">vehicles</span>
+                    </div>
+                    
+                    <hr class="card-divider">
+                    
+                    <div class="breakdown-grid">
+                        <div class="breakdown-item">
+                            <div class="item-left">
+                                <span class="item-icon">🚗</span>
+                                <span class="item-name">Cars</span>
+                            </div>
+                            <span class="item-val" id="count-cars">0 <span class="total-badge">Total: 0</span></span>
+                        </div>
+                        <div class="breakdown-item">
+                            <div class="item-left">
+                                <span class="item-icon">🏍️</span>
+                                <span class="item-name">Bikes</span>
+                            </div>
+                            <span class="item-val" id="count-bikes">0 <span class="total-badge">Total: 0</span></span>
+                        </div>
+                        <div class="breakdown-item">
+                            <div class="item-left">
+                                <span class="item-icon">🚌</span>
+                                <span class="item-name">Buses</span>
+                            </div>
+                            <span class="item-val" id="count-buses">0 <span class="total-badge">Total: 0</span></span>
+                        </div>
+                        <div class="breakdown-item">
+                            <div class="item-left">
+                                <span class="item-icon">🚚</span>
+                                <span class="item-name">Trucks</span>
+                            </div>
+                            <span class="item-val" id="count-trucks">0 <span class="total-badge">Total: 0</span></span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- COLUMN 3: Adaptive Signal & Graph -->
+            <section class="column-right">
+                <!-- Adaptive Signal Simulator -->
+                <div class="signal-card glass">
+                    <h2>Adaptive Signal</h2>
+                    <div class="traffic-light-container">
+                        <div class="traffic-light">
+                            <div id="light-red" class="light red"></div>
+                            <div id="light-yellow" class="light yellow"></div>
+                            <div id="light-green" class="light green"></div>
+                        </div>
+                    </div>
+                    <div class="signal-info">
+                        <div class="state-label">State: <span id="current-state" class="fw-bold">RED</span></div>
+                        <div class="time-label">Remaining: <span id="time-left" class="fw-bold">10.0s</span></div>
+                    </div>
+                </div>
+
+                <!-- Live Density Graph -->
+                <div class="graph-card glass flex-grow">
+                    <h2>Density Graph</h2>
+                    <div class="chart-container">
+                        <canvas id="densityChart"></canvas>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/app.js?v=3"></script>
+</body>
+</html>

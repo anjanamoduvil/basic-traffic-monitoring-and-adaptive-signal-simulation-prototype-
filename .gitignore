@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Machine Learning Weights
+*.pt
+*.pth
+
+# Large Generated and Raw Media
+output_heavy_congestion_simulation.mp4
+output_complex_traffic_simulation.mp4
+output_traffic_simulation.mp4
+new_congested_traffic.mp4
+test_frames/
+test_frames/
+
+# Virtual Environments
+venv/
+env/
+.env
+.venv
+myenv/
+
+# IDE files
+.vscode/
+.idea/
+.DS_Store
