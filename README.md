@@ -1,5 +1,4 @@
-# video of the project:
-
+# video of the project:[Watch Project Demo](https://drive.google.com/file/d/1oiK3GH-wvTonvcvAOKf4cY-raWHhCw0c/view?usp=sharing)
 
 # Traffic Vision AI: Adaptive Intersection Management Prototype
 
