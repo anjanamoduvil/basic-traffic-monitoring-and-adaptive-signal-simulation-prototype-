@@ -1,3 +1,6 @@
+# video of the project:
+
+
 # Traffic Vision AI: Adaptive Intersection Management Prototype
 
 A real-time traffic monitoring and adaptive traffic signal simulation system that uses **YOLOv8** for high-accuracy vehicle detection and advanced multi-object tracking, calculates live traffic queue density within a Region of Interest (ROI), and simulates intelligent, density-driven traffic signal timings.
