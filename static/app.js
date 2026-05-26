@@ -34,20 +34,41 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize Chart.js
     const ctx = document.getElementById('densityChart').getContext('2d');
+    
+    // Create beautiful neon cyan gradient
+    const gradient = ctx.createLinearGradient(0, 0, 0, 180);
+    gradient.addColorStop(0, 'rgba(6, 182, 212, 0.4)');   // Neon Cyan at top
+    gradient.addColorStop(0.5, 'rgba(59, 130, 246, 0.15)'); // Royal Blue in middle
+    gradient.addColorStop(1, 'rgba(30, 41, 59, 0)');        // Fade out
+    
     const densityChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: Array(20).fill(''), // X-axis labels
-            datasets: [{
-                label: 'Vehicles in ROI',
-                data: Array(20).fill(0),
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.2)',
-                borderWidth: 2,
-                pointRadius: 0,
-                tension: 0.4,
-                fill: true
-            }]
+            datasets: [
+                {
+                    label: 'Live ROI Count',
+                    data: Array(20).fill(0),
+                    borderColor: '#06b6d4', // Cyan border
+                    backgroundColor: gradient,
+                    borderWidth: 3,
+                    pointRadius: 2,
+                    pointBackgroundColor: '#06b6d4',
+                    pointHoverRadius: 5,
+                    tension: 0.4,
+                    fill: true
+                },
+                {
+                    label: 'Warning Limit',
+                    data: Array(20).fill(6), // Default to 6
+                    borderColor: '#ef4444',  // Red border
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0
+                }
+            ]
         },
         options: {
             responsive: true,
@@ -57,25 +78,62 @@ document.addEventListener('DOMContentLoaded', () => {
                     beginAtZero: true,
                     suggestedMax: 10,
                     grid: {
-                        color: 'rgba(255, 255, 255, 0.1)'
+                        color: 'rgba(255, 255, 255, 0.05)'
                     },
                     ticks: {
-                        color: '#94a3b8'
+                        color: '#94a3b8',
+                        font: {
+                            family: 'Inter',
+                            size: 11
+                        }
                     }
                 },
                 x: {
                     grid: {
+                        display: false
+                    },
+                    ticks: {
                         display: false
                     }
                 }
             },
             plugins: {
                 legend: {
-                    display: false
+                    display: true,
+                    position: 'top',
+                    align: 'end',
+                    labels: {
+                        color: '#94a3b8',
+                        font: {
+                            family: 'Inter',
+                            size: 11,
+                            weight: '500'
+                        },
+                        boxWidth: 10,
+                        usePointStyle: true,
+                        pointStyle: 'rectRounded'
+                    }
+                },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    titleColor: '#f8fafc',
+                    bodyColor: '#cbd5e1',
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    borderWidth: 1,
+                    padding: 8,
+                    cornerRadius: 8,
+                    displayColors: true,
+                    boxWidth: 8,
+                    boxHeight: 8,
+                    usePointStyle: true
                 }
             },
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
             animation: {
-                duration: 0
+                duration: 150
             }
         }
     });
@@ -119,6 +177,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const currentData = densityChart.data.datasets[0].data;
             currentData.shift(); // Remove oldest
             currentData.push(data.vehicles_in_roi); // Add newest
+            
+            // Update dynamic warning limit from backend threshold
+            if (data.congestion_threshold !== undefined) {
+                densityChart.data.datasets[1].data = Array(20).fill(data.congestion_threshold);
+            }
+            
             densityChart.update();
             
         } catch (error) {

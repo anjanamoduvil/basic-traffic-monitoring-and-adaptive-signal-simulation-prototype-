@@ -48,7 +48,7 @@ class TrafficSignalSimulator:
         self.min_red_time = 5.0
         
         self.current_duration = self.base_red_time
-        self.congestion_threshold = 10
+        self.congestion_threshold = 6
 
     def update(self, dt, vehicle_count):
         self.timer += dt
@@ -87,6 +87,7 @@ global_metrics = {
     "state": RED,
     "time_left": 10.0,
     "is_congested": False,
+    "congestion_threshold": 6,
     "live_counts": {"car": 0, "motorcycle": 0, "bus": 0, "truck": 0},
     "total_counts": {"car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
 }
@@ -105,10 +106,10 @@ def generate_frames():
     dt = 1.0 / fps
 
     roi_points = np.array([
-        [int(width * 0.18), int(height * 0.9)],
-        [int(width * 0.70), int(height * 0.9)],
-        [int(width * 0.52), int(height * 0.60)],
-        [int(width * 0.38), int(height * 0.60)]
+        [int(width * 0.05), int(height * 0.95)],
+        [int(width * 0.95), int(height * 0.95)],
+        [int(width * 0.75), int(height * 0.45)],
+        [int(width * 0.25), int(height * 0.45)]
     ], np.int32)
 
     class_names = {
@@ -193,6 +194,7 @@ def generate_frames():
         global_metrics["state"] = simulator.state
         global_metrics["time_left"] = max(0.0, simulator.current_duration - simulator.timer)
         global_metrics["is_congested"] = vehicles_in_roi > simulator.congestion_threshold
+        global_metrics["congestion_threshold"] = simulator.congestion_threshold
         global_metrics["live_counts"] = live_counts
         
         totals = {k: len(v) for k, v in unique_seen.items()}
