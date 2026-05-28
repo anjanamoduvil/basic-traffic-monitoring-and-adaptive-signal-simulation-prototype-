@@ -55,7 +55,7 @@ class TrafficSignalSimulator:
         
         if self.state == GREEN:
             adaptive_duration = self.base_green_time
-            if vehicle_count > self.congestion_threshold:
+            if vehicle_count >= self.congestion_threshold:
                 adaptive_duration = min(self.max_green_time, self.base_green_time + (vehicle_count - self.congestion_threshold) * 2.0)
             self.current_duration = adaptive_duration
             if self.timer >= self.current_duration:
@@ -71,7 +71,7 @@ class TrafficSignalSimulator:
                 
         elif self.state == RED:
             adaptive_duration = self.base_red_time
-            if vehicle_count > self.congestion_threshold + 3:
+            if vehicle_count >= self.congestion_threshold + 3:
                 adaptive_duration = self.min_red_time
             self.current_duration = adaptive_duration
             if self.timer >= self.current_duration:
@@ -84,12 +84,14 @@ simulator = TrafficSignalSimulator()
 # Global metrics state
 global_metrics = {
     "vehicles_in_roi": 0,
+    "total_live_vehicles": 0,
     "state": RED,
     "time_left": 10.0,
     "is_congested": False,
     "congestion_threshold": 6,
-    "live_counts": {"car": 0, "motorcycle": 0, "bus": 0, "truck": 0},
-    "total_counts": {"car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
+    "congestion_threshold_frame": 10,
+    "live_counts": {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0},
+    "total_counts": {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
 }
 
 def generate_frames():
@@ -113,6 +115,8 @@ def generate_frames():
     ], np.int32)
 
     class_names = {
+        0: "person",
+        1: "motorcycle",
         2: "car",
         3: "motorcycle",
         5: "bus",
@@ -120,6 +124,7 @@ def generate_frames():
     }
 
     unique_seen = {
+        "person": set(),
         "car": set(),
         "motorcycle": set(),
         "bus": set(),
@@ -138,44 +143,115 @@ def generate_frames():
                 unique_seen[k].clear()
             continue
             
-        results = model.track(frame, persist=True, classes=[2, 3, 5, 7], conf=0.15, iou=0.5, verbose=False)
+        results = model.track(frame, persist=True, classes=[0, 1, 2, 3, 5, 7], conf=0.10, iou=0.5, verbose=False)
         vehicles_in_roi = 0
-        live_counts = {"car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
+        live_counts = {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
+        
+        persons_detected = []
+        vehicles_detected = []
         
         if results[0].boxes is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
             clss = results[0].boxes.cls.cpu().numpy()
+            confs = results[0].boxes.conf.cpu().numpy()
             ids = results[0].boxes.id.cpu().numpy() if results[0].boxes.id is not None else [None] * len(boxes)
             
-            for box, cls_idx, track_id in zip(boxes, clss, ids):
+            for box, cls_idx, conf, track_id in zip(boxes, clss, confs, ids):
                 x1, y1, x2, y2 = map(int, box)
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                
                 cls_idx = int(cls_idx)
                 v_type = class_names.get(cls_idx, "car")
                 
-                # Update live count
-                live_counts[v_type] += 1
-                
-                # Update unique count
-                if track_id is not None:
-                    unique_seen[v_type].add(int(track_id))
-                
-                # Highly accurate road-contact check (bottom-center of bounding box)
-                cy_check = y2
-                dist = cv2.pointPolygonTest(roi_points, (cx, cy_check), False)
-                in_roi = (dist >= 0)
-                
-                if in_roi:
-                    vehicles_in_roi += 1
-                    color = (0, 255, 0)
+                if v_type == "person":
+                    # Filter out weak standalone pedestrian detections to avoid noise
+                    if conf < 0.30:
+                        continue
+                    persons_detected.append((x1, y1, x2, y2, track_id, conf))
                 else:
-                    color = (255, 0, 0)
+                    vehicles_detected.append((x1, y1, x2, y2, track_id, v_type))
                     
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                id_text = f"{v_type.capitalize()} ID:{int(track_id)}" if track_id is not None else f"{v_type.capitalize()}"
-                cv2.putText(frame, id_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                cv2.circle(frame, (cx, cy_check), 4, color, -1)
+        # Filter persons to exclude riders (persons overlapping with motorcycles/vehicles)
+        def box_intersection_fraction(box_person, box_vehicle):
+            px1, py1, px2, py2 = box_person[:4]
+            vx1, vy1, vx2, vy2 = box_vehicle[:4]
+            ix1 = max(px1, vx1)
+            iy1 = max(py1, vy1)
+            ix2 = min(px2, vx2)
+            iy2 = min(py2, vy2)
+            if ix1 < ix2 and iy1 < iy2:
+                inter_area = (ix2 - ix1) * (iy2 - iy1)
+                person_area = (px2 - px1) * (py2 - py1)
+                if person_area > 0:
+                    return inter_area / person_area
+            return 0.0
+
+        actual_pedestrians = []
+        for p_box in persons_detected:
+            px1, py1, px2, py2, p_id, p_conf = p_box
+            is_rider = False
+            for v_box in vehicles_detected:
+                # Lower overlap threshold to 0.15 to handle high-perspective offset
+                if box_intersection_fraction((px1, py1, px2, py2), v_box[:4]) > 0.15:
+                    is_rider = True
+                    break
+            
+            if is_rider:
+                # Discard duplicate person bounding box overlapping with a vehicle
+                continue
+                
+            # Heuristic: Since this is a high-speed motorway with no pedestrian walking lanes,
+            # any standalone person detection inside the active lanes or ROI is a motorcycle rider
+            # whose bike was not detected separately by YOLO. Let's auto-correct them to motorcycle!
+            cx, cy = (px1 + px2) // 2, (py1 + py2) // 2
+            in_roi_or_lanes = cv2.pointPolygonTest(roi_points, (cx, py2), False) >= 0 or (px2 < width * 0.9)
+            
+            if in_roi_or_lanes:
+                vehicles_detected.append((px1, py1, px2, py2, p_id, "motorcycle"))
+            else:
+                # Only keep as actual pedestrian if high confidence and completely off-road
+                if p_conf >= 0.40:
+                    actual_pedestrians.append((px1, py1, px2, py2, p_id))
+
+        # Process Vehicles
+        for x1, y1, x2, y2, track_id, v_type in vehicles_detected:
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            
+            live_counts[v_type] += 1
+            if track_id is not None:
+                unique_seen[v_type].add(int(track_id))
+                
+            points_to_check = [
+                (cx, cy), (x1, y1), (x2, y1), (x1, y2), (x2, y2), (cx, y1), (cx, y2)
+            ]
+            in_roi = False
+            for pt in points_to_check:
+                if cv2.pointPolygonTest(roi_points, pt, False) >= 0:
+                    in_roi = True
+                    break
+            
+            if in_roi:
+                vehicles_in_roi += 1
+                color = (0, 255, 0)
+            else:
+                color = (255, 0, 0)
+                
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            id_text = f"{v_type.capitalize()} ID:{int(track_id)}" if track_id is not None else f"{v_type.capitalize()}"
+            cv2.putText(frame, id_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.circle(frame, (cx, y2), 4, color, -1)
+
+        # Process Actual Pedestrians
+        for x1, y1, x2, y2, track_id in actual_pedestrians:
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            v_type = "person"
+            
+            live_counts[v_type] += 1
+            if track_id is not None:
+                unique_seen[v_type].add(int(track_id))
+                
+            color = (255, 0, 255)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            id_text = f"Pedestrian ID:{int(track_id)}" if track_id is not None else "Pedestrian"
+            cv2.putText(frame, id_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
         # We compute real dt for smooth simulation, or just use 1/fps
         # For a web stream it's often better to use real time elapsed if processing takes long
@@ -190,39 +266,52 @@ def generate_frames():
         cv2.polylines(frame, [roi_points], isClosed=True, color=(0, 255, 255), thickness=3)
 
         # Update metrics global state
+        total_live_vehicles = sum(v for k, v in live_counts.items() if k != "person")
         global_metrics["vehicles_in_roi"] = vehicles_in_roi
+        global_metrics["total_live_vehicles"] = total_live_vehicles
         global_metrics["state"] = simulator.state
         global_metrics["time_left"] = max(0.0, simulator.current_duration - simulator.timer)
-        global_metrics["is_congested"] = vehicles_in_roi > simulator.congestion_threshold
+        global_metrics["is_congested"] = (vehicles_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
         global_metrics["congestion_threshold"] = simulator.congestion_threshold
+        global_metrics["congestion_threshold_frame"] = 10
         global_metrics["live_counts"] = live_counts
         
         totals = {k: len(v) for k, v in unique_seen.items()}
         global_metrics["total_counts"] = totals
-        global_metrics["total_vehicles"] = sum(totals.values())
+        global_metrics["total_vehicles"] = sum(v for k, v in totals.items() if k != "person")
 
         # Draw Information Panel natively on video to match sample
-        panel_h = 220
-        panel_w = 350
+        panel_h = 240
+        panel_w = 355
         cv2.rectangle(frame, (10, 10), (10 + panel_w, 10 + panel_h), (0, 0, 0), -1)
         
-        cv2.putText(frame, f"Traffic Density: {vehicles_in_roi} vehicles", (20, 40), 
+        cv2.putText(frame, f"ROI Density: {vehicles_in_roi} vehicles", (20, 40), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, f"Screen Density: {total_live_vehicles} vehicles", (20, 75), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
                     
-        if vehicles_in_roi > simulator.congestion_threshold:
-            cv2.putText(frame, "CONGESTION WARNING!", (20, 80), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 3)
+        is_congested = (vehicles_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
+        if is_congested:
+            warning_text = "CONGESTION WARNING!"
+            if vehicles_in_roi >= simulator.congestion_threshold and total_live_vehicles >= 10:
+                warning_text = "HIGH CONGESTION (BOTH)"
+            elif vehicles_in_roi >= simulator.congestion_threshold:
+                warning_text = "ROI CONGESTION"
+            else:
+                warning_text = "SCREEN CONGESTION"
+            cv2.putText(frame, warning_text, (20, 110), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                         
-        cv2.putText(frame, f"Signal: {simulator.state}", (20, 120), 
+        cv2.putText(frame, f"Signal: {simulator.state}", (20, 145), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"Time left: {max(0, simulator.current_duration - simulator.timer):.1f}s", (20, 160), 
+        cv2.putText(frame, f"Time left: {max(0, simulator.current_duration - simulator.timer):.1f}s", (20, 180), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
         if simulator.state == GREEN and simulator.current_duration > simulator.base_green_time:
-            cv2.putText(frame, "ADAPTIVE: GREEN EXTENDED", (20, 200), 
+            cv2.putText(frame, "ADAPTIVE: GREEN EXTENDED", (20, 215), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         if simulator.state == RED and simulator.current_duration < simulator.base_red_time:
-            cv2.putText(frame, "ADAPTIVE: EARLY GREEN PENDING", (20, 200), 
+            cv2.putText(frame, "ADAPTIVE: EARLY GREEN PENDING", (20, 215), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
         ret, buffer = cv2.imencode('.jpg', frame)

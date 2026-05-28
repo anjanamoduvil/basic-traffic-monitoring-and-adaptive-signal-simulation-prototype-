@@ -147,9 +147,21 @@ document.addEventListener('DOMContentLoaded', () => {
             // Update Vehicle Count
             vehicleCountEl.textContent = data.vehicles_in_roi;
             
+            // Update Total Live Count
+            if (data.total_live_vehicles !== undefined) {
+                document.getElementById('total-live-count').textContent = data.total_live_vehicles;
+            }
+            
             // Update Warning Banner
             if (data.is_congested) {
                 warningBanner.classList.remove('hidden');
+                if (data.vehicles_in_roi >= 6 && data.total_live_vehicles >= 10) {
+                    warningBanner.innerHTML = "⚠️ High Congestion (Both)";
+                } else if (data.vehicles_in_roi >= 6) {
+                    warningBanner.innerHTML = "⚠️ ROI Congestion (Yellow Box)";
+                } else {
+                    warningBanner.innerHTML = "⚠️ Whole Screen Congestion";
+                }
             } else {
                 warningBanner.classList.add('hidden');
             }
@@ -166,6 +178,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('count-bikes').innerHTML = `${data.live_counts.motorcycle} <span class="total-badge">Total: ${data.total_counts.motorcycle}</span>`;
                 document.getElementById('count-buses').innerHTML = `${data.live_counts.bus} <span class="total-badge">Total: ${data.total_counts.bus}</span>`;
                 document.getElementById('count-trucks').innerHTML = `${data.live_counts.truck} <span class="total-badge">Total: ${data.total_counts.truck}</span>`;
+                if (data.live_counts.person !== undefined && data.total_counts.person !== undefined) {
+                    document.getElementById('count-pedestrians').innerHTML = `${data.live_counts.person} <span class="total-badge">Total: ${data.total_counts.person}</span>`;
+                }
             }
             
             // Update Total Tracked Vehicles Count

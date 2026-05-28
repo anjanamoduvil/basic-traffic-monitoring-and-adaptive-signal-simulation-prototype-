@@ -6,7 +6,7 @@
     <title>CyberGuard | Traffic Vision</title>
     <!-- Use Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3">
+    <link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
     <div class="app-container single-frame">
@@ -31,9 +31,21 @@
                 <!-- Density Metrics -->
                 <div class="metrics-card glass">
                     <h2>Traffic Density</h2>
-                    <div class="metric-value">
-                        <span id="vehicle-count">0</span>
-                        <span class="unit">vehicles</span>
+                    <div class="density-split">
+                        <div class="density-box">
+                            <span class="density-label">Yellow Box (ROI)</span>
+                            <div class="metric-value small">
+                                <span id="vehicle-count">0</span>
+                                <span class="unit">vehicles</span>
+                            </div>
+                        </div>
+                        <div class="density-box">
+                            <span class="density-label">Total Screen</span>
+                            <div class="metric-value small">
+                                <span id="total-live-count">0</span>
+                                <span class="unit">vehicles</span>
+                            </div>
+                        </div>
                     </div>
                     <div id="congestion-warning" class="warning-banner hidden">
                         ⚠️ High Congestion
@@ -79,6 +91,13 @@
                             </div>
                             <span class="item-val" id="count-trucks">0 <span class="total-badge">Total: 0</span></span>
                         </div>
+                        <div class="breakdown-item">
+                            <div class="item-left">
+                                <span class="item-icon">🚶</span>
+                                <span class="item-name">Pedestrians</span>
+                            </div>
+                            <span class="item-val" id="count-pedestrians">0 <span class="total-badge">Total: 0</span></span>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -114,6 +133,6 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=4"></script>
 </body>
 </html>

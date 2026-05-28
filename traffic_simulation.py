@@ -44,7 +44,7 @@ class TrafficSignalSimulator:
         if self.state == GREEN:
             # Adaptive logic: Extend green time if there are many vehicles
             adaptive_duration = self.base_green_time
-            if vehicle_count > self.congestion_threshold:
+            if vehicle_count >= self.congestion_threshold:
                 adaptive_duration = min(self.max_green_time, self.base_green_time + (vehicle_count - self.congestion_threshold) * 2.0)
             
             self.current_duration = adaptive_duration
@@ -63,7 +63,7 @@ class TrafficSignalSimulator:
         elif self.state == RED:
             # Adaptive logic: Shorten red time if congestion is severe
             adaptive_duration = self.base_red_time
-            if vehicle_count > self.congestion_threshold + 3:
+            if vehicle_count >= self.congestion_threshold + 3:
                 # Force early green if waiting too long (but enforce minimum red time)
                 adaptive_duration = self.min_red_time
                 
@@ -109,6 +109,8 @@ def main():
     dt = 1.0 / fps
     
     class_names = {
+        0: "person",
+        1: "motorcycle",
         2: "car",
         3: "motorcycle",
         5: "bus",
@@ -116,6 +118,7 @@ def main():
     }
 
     unique_seen = {
+        "person": set(),
         "car": set(),
         "motorcycle": set(),
         "bus": set(),
@@ -138,50 +141,119 @@ def main():
         frame_count += 1
         
         # Run YOLO detection and tracking
-        # COCO Classes: 2=car, 3=motorcycle, 5=bus, 7=truck
-        results = model.track(frame, persist=True, classes=[2, 3, 5, 7], verbose=False)
+        # COCO Classes: 0=person, 1=bicycle, 2=car, 3=motorcycle, 5=bus, 7=truck
+        results = model.track(frame, persist=True, classes=[0, 1, 2, 3, 5, 7], conf=0.10, iou=0.5, verbose=False)
         
         vehicles_in_roi = 0
-        live_counts = {"car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
+        live_counts = {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
         
-        # Process detections
+        persons_detected = []
+        vehicles_detected = []
+        
         if results[0].boxes is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
             clss = results[0].boxes.cls.cpu().numpy()
+            confs = results[0].boxes.conf.cpu().numpy()
             ids = results[0].boxes.id.cpu().numpy() if results[0].boxes.id is not None else [None] * len(boxes)
             
-            for box, cls_idx, track_id in zip(boxes, clss, ids):
+            for box, cls_idx, conf, track_id in zip(boxes, clss, confs, ids):
                 x1, y1, x2, y2 = map(int, box)
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                
                 cls_idx = int(cls_idx)
                 v_type = class_names.get(cls_idx, "car")
                 
-                # Update live count
-                live_counts[v_type] += 1
-                
-                # Update unique count
-                if track_id is not None:
-                    unique_seen[v_type].add(int(track_id))
-                
-                # Highly accurate road-contact check (bottom-center of bounding box)
-                cy_check = y2
-                dist = cv2.pointPolygonTest(roi_points, (cx, cy_check), False)
-                in_roi = (dist >= 0)
-                
-                if in_roi:
-                    vehicles_in_roi += 1
-                    color = (0, 255, 0) # Green for in ROI
+                if v_type == "person":
+                    # Filter out weak standalone pedestrian detections to avoid noise
+                    if conf < 0.30:
+                        continue
+                    persons_detected.append((x1, y1, x2, y2, track_id, conf))
                 else:
-                    color = (255, 0, 0) # Blue for outside
+                    vehicles_detected.append((x1, y1, x2, y2, track_id, v_type))
                     
-                # Draw bounding box and ID
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                id_text = f"{v_type.capitalize()} ID:{int(track_id)}" if track_id is not None else f"{v_type.capitalize()}"
-                cv2.putText(frame, id_text, (x1, y1 - 10), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                # Draw contact point
-                cv2.circle(frame, (cx, cy_check), 4, color, -1)
+        # Filter persons to exclude riders (persons overlapping with motorcycles/vehicles)
+        def box_intersection_fraction(box_person, box_vehicle):
+            px1, py1, px2, py2 = box_person[:4]
+            vx1, vy1, vx2, vy2 = box_vehicle[:4]
+            ix1 = max(px1, vx1)
+            iy1 = max(py1, vy1)
+            ix2 = min(px2, vx2)
+            iy2 = min(py2, vy2)
+            if ix1 < ix2 and iy1 < iy2:
+                inter_area = (ix2 - ix1) * (iy2 - iy1)
+                person_area = (px2 - px1) * (py2 - py1)
+                if person_area > 0:
+                    return inter_area / person_area
+            return 0.0
+
+        actual_pedestrians = []
+        for p_box in persons_detected:
+            px1, py1, px2, py2, p_id, p_conf = p_box
+            is_rider = False
+            for v_box in vehicles_detected:
+                # Lower overlap threshold to 0.15 to handle high-perspective offset
+                if box_intersection_fraction((px1, py1, px2, py2), v_box[:4]) > 0.15:
+                    is_rider = True
+                    break
+            
+            if is_rider:
+                # Discard duplicate person bounding box overlapping with a vehicle
+                continue
+                
+            # Heuristic: Since this is a high-speed motorway with no pedestrian walking lanes,
+            # any standalone person detection inside the active lanes or ROI is a motorcycle rider
+            # whose bike was not detected separately by YOLO. Let's auto-correct them to motorcycle!
+            cx, cy = (px1 + px2) // 2, (py1 + py2) // 2
+            in_roi_or_lanes = cv2.pointPolygonTest(roi_points, (cx, py2), False) >= 0 or (px2 < width * 0.9)
+            
+            if in_roi_or_lanes:
+                vehicles_detected.append((px1, py1, px2, py2, p_id, "motorcycle"))
+            else:
+                # Only keep as actual pedestrian if high confidence and completely off-road
+                if p_conf >= 0.40:
+                    actual_pedestrians.append((px1, py1, px2, py2, p_id))
+
+        # Process Vehicles
+        for x1, y1, x2, y2, track_id, v_type in vehicles_detected:
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            
+            live_counts[v_type] += 1
+            if track_id is not None:
+                unique_seen[v_type].add(int(track_id))
+                
+            points_to_check = [
+                (cx, cy), (x1, y1), (x2, y1), (x1, y2), (x2, y2), (cx, y1), (cx, y2)
+            ]
+            in_roi = False
+            for pt in points_to_check:
+                if cv2.pointPolygonTest(roi_points, pt, False) >= 0:
+                    in_roi = True
+                    break
+            
+            if in_roi:
+                vehicles_in_roi += 1
+                color = (0, 255, 0)
+            else:
+                color = (255, 0, 0)
+                
+            # Draw bounding box and ID
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            id_text = f"{v_type.capitalize()} ID:{int(track_id)}" if track_id is not None else f"{v_type.capitalize()}"
+            cv2.putText(frame, id_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            # Draw contact point
+            cv2.circle(frame, (cx, y2), 4, color, -1)
+
+        # Process Actual Pedestrians
+        for x1, y1, x2, y2, track_id in actual_pedestrians:
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            v_type = "person"
+            
+            live_counts[v_type] += 1
+            if track_id is not None:
+                unique_seen[v_type].add(int(track_id))
+                
+            color = (255, 0, 255)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            id_text = f"Pedestrian ID:{int(track_id)}" if track_id is not None else "Pedestrian"
+            cv2.putText(frame, id_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
         # Update Traffic Simulator
         simulator.update(dt, vehicles_in_roi)
@@ -190,55 +262,67 @@ def main():
         cv2.polylines(frame, [roi_points], isClosed=True, color=(0, 255, 255), thickness=3)
         
         # Draw Information Panel
-        panel_h = 220
-        panel_w = 350
+        panel_h = 240
+        panel_w = 355
         cv2.rectangle(frame, (10, 10), (10 + panel_w, 10 + panel_h), (0, 0, 0), -1)
         
         # Display Texts
-        cv2.putText(frame, f"Traffic Density: {vehicles_in_roi} vehicles", (20, 40), 
+        total_live_vehicles = sum(v for k, v in live_counts.items() if k != "person")
+        cv2.putText(frame, f"ROI Density: {vehicles_in_roi} vehicles", (20, 40), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, f"Screen Density: {total_live_vehicles} vehicles", (20, 75), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
                     
-        # Congestion Warning
-        if vehicles_in_roi > simulator.congestion_threshold:
-            cv2.putText(frame, "CONGESTION WARNING!", (20, 80), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 3)
+        is_congested = (vehicles_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
+        if is_congested:
+            warning_text = "CONGESTION WARNING!"
+            if vehicles_in_roi >= simulator.congestion_threshold and total_live_vehicles >= 10:
+                warning_text = "HIGH CONGESTION (BOTH)"
+            elif vehicles_in_roi >= simulator.congestion_threshold:
+                warning_text = "ROI CONGESTION"
+            else:
+                warning_text = "SCREEN CONGESTION"
+            cv2.putText(frame, warning_text, (20, 110), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             if not screenshot_flags["congestion"]:
                 cv2.imwrite(os.path.join(SCREENSHOT_DIR, "congestion_warning.jpg"), frame)
                 screenshot_flags["congestion"] = True
                 
         # Signal Status
-        cv2.putText(frame, f"Signal: {simulator.state}", (20, 120), 
+        cv2.putText(frame, f"Signal: {simulator.state}", (20, 145), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"Time left: {max(0, simulator.current_duration - simulator.timer):.1f}s", (20, 160), 
+        cv2.putText(frame, f"Time left: {max(0, simulator.current_duration - simulator.timer):.1f}s", (20, 180), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
         if simulator.state == GREEN and simulator.current_duration > simulator.base_green_time:
-            cv2.putText(frame, "ADAPTIVE: GREEN EXTENDED", (20, 200), 
+            cv2.putText(frame, "ADAPTIVE: GREEN EXTENDED", (20, 215), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             if not screenshot_flags["adaptive_green"]:
                 cv2.imwrite(os.path.join(SCREENSHOT_DIR, "adaptive_green.jpg"), frame)
                 screenshot_flags["adaptive_green"] = True
                 
         if simulator.state == RED and simulator.current_duration < simulator.base_red_time:
-            cv2.putText(frame, "ADAPTIVE: EARLY GREEN PENDING", (20, 200), 
+            cv2.putText(frame, "ADAPTIVE: EARLY GREEN PENDING", (20, 215), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
             if not screenshot_flags["adaptive_red"]:
                 cv2.imwrite(os.path.join(SCREENSHOT_DIR, "adaptive_red.jpg"), frame)
                 screenshot_flags["adaptive_red"] = True
 
         # Draw Vehicle Breakdown Panel
-        breakdown_h = 170
+        breakdown_h = 200
         breakdown_w = 350
-        cv2.rectangle(frame, (10, 240), (10 + breakdown_w, 240 + breakdown_h), (0, 0, 0), -1)
-        cv2.putText(frame, "Vehicle Breakdown:", (20, 270), 
+        cv2.rectangle(frame, (10, 260), (10 + breakdown_w, 260 + breakdown_h), (0, 0, 0), -1)
+        cv2.putText(frame, "Breakdown & Pedestrians:", (20, 290), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        cv2.putText(frame, f"Cars: {live_counts['car']} (Total: {len(unique_seen['car'])})", (20, 305), 
+        cv2.putText(frame, f"Cars: {live_counts['car']} (Total: {len(unique_seen['car'])})", (20, 320), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame, f"Bikes: {live_counts['motorcycle']} (Total: {len(unique_seen['motorcycle'])})", (20, 335), 
+        cv2.putText(frame, f"Bikes: {live_counts['motorcycle']} (Total: {len(unique_seen['motorcycle'])})", (20, 350), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame, f"Buses: {live_counts['bus']} (Total: {len(unique_seen['bus'])})", (20, 365), 
+        cv2.putText(frame, f"Buses: {live_counts['bus']} (Total: {len(unique_seen['bus'])})", (20, 380), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame, f"Trucks: {live_counts['truck']} (Total: {len(unique_seen['truck'])})", (20, 395), 
+        cv2.putText(frame, f"Trucks: {live_counts['truck']} (Total: {len(unique_seen['truck'])})", (20, 410), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, f"Pedestrians: {live_counts['person']} (Total: {len(unique_seen['person'])})", (20, 440), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 
         # Draw Visual Traffic Light

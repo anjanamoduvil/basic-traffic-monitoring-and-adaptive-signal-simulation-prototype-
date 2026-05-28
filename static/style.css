@@ -441,3 +441,34 @@ body {
 .main-content {
     animation-delay: 0.1s;
 }
+
+/* Density Split Layout */
+.density-split {
+    display: flex;
+    gap: 1rem;
+    width: 100%;
+}
+
+.density-box {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 0.75rem;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.density-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.metric-value.small {
+    font-size: 1.8rem;
+    font-weight: 700;
+}
