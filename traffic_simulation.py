@@ -5,7 +5,7 @@ import time
 import os
 
 # Configuration
-VIDEO_PATH = "new_congested_traffic.mp4"
+VIDEO_PATH = "C:/Users/VICTUS/NIT/traffic_prototype/new_congested_traffic.mp4"
 OUTPUT_VIDEO_PATH = "output_heavy_congestion_simulation.mp4"
 SCREENSHOT_DIR = "screenshots"
 MODEL_NAME = "yolov8n.pt"
@@ -95,10 +95,10 @@ def main():
     # Define ROI based on frame dimensions
     # A trapezoid covering the lower middle part of the frame
     roi_points = np.array([
-        [int(width * 0.18), int(height * 0.9)],
-        [int(width * 0.70), int(height * 0.9)],
-        [int(width * 0.52), int(height * 0.60)],
-        [int(width * 0.38), int(height * 0.60)]
+        [int(width * 0.02), int(height * 0.95)],
+        [int(width * 0.98), int(height * 0.95)],
+        [int(width * 0.85), int(height * 0.45)],
+        [int(width * 0.15), int(height * 0.45)]
     ], np.int32)
     
     # Video writer setup
@@ -230,30 +230,33 @@ def main():
                     in_roi = True
                     break
             
-            # Speed Estimation using Centroid History
+            if in_roi:
+                vehicles_in_roi += 1
+                
+            # Speed Estimation using Centroid History (Frame-based time to bypass wall-clock lags)
             is_stationary = False
             estimated_speed = None
             if track_id is not None:
-                t_now = time.time()
                 tid = int(track_id)
                 if tid not in centroid_history:
                     centroid_history[tid] = []
-                centroid_history[tid].append((cx, cy, t_now))
+                centroid_history[tid].append((cx, cy, frame_count))
                 
-                # Keep rolling history up to 1.0 second
-                centroid_history[tid] = [entry for entry in centroid_history[tid] if t_now - entry[2] <= 1.0]
+                # Keep rolling history up to 30 frames (1.0 second of video playback time)
+                centroid_history[tid] = [entry for entry in centroid_history[tid] if entry[2] >= frame_count - 30]
                 
-                # Calculate speed if we have history covering at least 0.4 seconds
+                # Calculate speed if we have history covering at least 5 frames (0.15 seconds of video playback)
                 history = centroid_history[tid]
                 if len(history) > 2:
-                    dt_hist = history[-1][2] - history[0][2]
-                    if dt_hist >= 0.4:
+                    df = history[-1][2] - history[0][2]
+                    dt_play = df / fps
+                    if dt_play >= 0.15:
                         dx = history[-1][0] - history[0][0]
                         dy = history[-1][1] - history[0][1]
                         dist = np.sqrt(dx*dx + dy*dy)
-                        estimated_speed = dist / dt_hist
+                        estimated_speed = dist / dt_play  # pixels per video second
                         
-                        # If displacement speed is less than 18 pixels/sec, it is stationary
+                        # An optimized threshold of 18.0 pixels/sec accounts for YOLO bounding box jitter and perspective compression
                         if estimated_speed < 18.0:
                             is_stationary = True
 

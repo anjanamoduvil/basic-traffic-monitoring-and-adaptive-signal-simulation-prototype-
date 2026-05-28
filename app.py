@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 
 MODEL_NAME = "yolov8s.pt"
-VIDEO_PATH = "new_congested_traffic.mp4"
+VIDEO_PATH = "C:/Users/VICTUS/NIT/traffic_prototype/new_congested_traffic.mp4"
 
 # Global variables
 model = None
@@ -109,10 +109,10 @@ def generate_frames():
     dt = 1.0 / fps
 
     roi_points = np.array([
-        [int(width * 0.05), int(height * 0.95)],
-        [int(width * 0.95), int(height * 0.95)],
-        [int(width * 0.75), int(height * 0.45)],
-        [int(width * 0.25), int(height * 0.45)]
+        [int(width * 0.02), int(height * 0.95)],
+        [int(width * 0.98), int(height * 0.95)],
+        [int(width * 0.85), int(height * 0.45)],
+        [int(width * 0.15), int(height * 0.45)]
     ], np.int32)
 
     class_names = {
@@ -133,6 +133,7 @@ def generate_frames():
     }
 
     centroid_history = {}
+    frame_count = 0
     last_time = time.time()
 
     while True:
@@ -144,7 +145,10 @@ def generate_frames():
             for k in unique_seen:
                 unique_seen[k].clear()
             centroid_history.clear()
+            frame_count = 0
             continue
+            
+        frame_count += 1
             
         results = model.track(frame, persist=True, classes=[0, 1, 2, 3, 5, 7], conf=0.10, iou=0.5, verbose=False)
         vehicles_in_roi = 0
@@ -231,31 +235,34 @@ def generate_frames():
                 if cv2.pointPolygonTest(roi_points, pt, False) >= 0:
                     in_roi = True
                     break
-                    
-            # Speed Estimation using Centroid History
+            
+            if in_roi:
+                vehicles_in_roi += 1
+                
+            # Speed Estimation using Centroid History (Frame-based time to bypass wall-clock lags)
             is_stationary = False
             estimated_speed = None
             if track_id is not None:
-                t_now = time.time()
                 tid = int(track_id)
                 if tid not in centroid_history:
                     centroid_history[tid] = []
-                centroid_history[tid].append((cx, cy, t_now))
+                centroid_history[tid].append((cx, cy, frame_count))
                 
-                # Keep rolling history up to 1.0 second
-                centroid_history[tid] = [entry for entry in centroid_history[tid] if t_now - entry[2] <= 1.0]
+                # Keep rolling history up to 30 frames (1.0 second of video playback time)
+                centroid_history[tid] = [entry for entry in centroid_history[tid] if entry[2] >= frame_count - 30]
                 
-                # Calculate speed if we have history covering at least 0.4 seconds
+                # Calculate speed if we have history covering at least 5 frames (0.15 seconds of video playback)
                 history = centroid_history[tid]
                 if len(history) > 2:
-                    dt = history[-1][2] - history[0][2]
-                    if dt >= 0.4:
+                    df = history[-1][2] - history[0][2]
+                    dt_play = df / fps
+                    if dt_play >= 0.15:
                         dx = history[-1][0] - history[0][0]
                         dy = history[-1][1] - history[0][1]
                         dist = np.sqrt(dx*dx + dy*dy)
-                        estimated_speed = dist / dt  # pixels per second
+                        estimated_speed = dist / dt_play  # pixels per video second
                         
-                        # If displacement speed is less than 18 pixels/sec, it is stationary
+                        # An optimized threshold of 18.0 pixels/sec accounts for YOLO bounding box jitter and perspective compression
                         if estimated_speed < 18.0:
                             is_stationary = True
             

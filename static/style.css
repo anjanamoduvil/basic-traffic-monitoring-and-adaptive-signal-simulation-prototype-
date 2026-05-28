@@ -444,31 +444,41 @@ body {
 
 /* Density Split Layout */
 .density-split {
-    display: flex;
-    gap: 1rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
     width: 100%;
 }
 
 .density-box {
-    flex: 1;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.05);
-    padding: 0.75rem;
+    padding: 0.5rem;
     border-radius: 12px;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.1rem;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.density-box.full-width {
+    grid-column: span 2;
 }
 
 .density-label {
-    font-size: 0.75rem;
+    font-size: 0.65rem;
     font-weight: 600;
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .metric-value.small {
-    font-size: 1.8rem;
+    font-size: 1.3rem;
     font-weight: 700;
+    white-space: nowrap;
 }
