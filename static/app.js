@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
             labels: Array(20).fill(''), // X-axis labels
             datasets: [
                 {
-                    label: 'Live ROI Count',
+                    label: 'Live Stuck Queue',
                     data: Array(20).fill(0),
                     borderColor: '#06b6d4', // Cyan border
                     backgroundColor: gradient,
@@ -144,8 +144,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/metrics');
             const data = await response.json();
             
-            // Update Vehicle Count
+            // Update Vehicle Count (Total ROI Density)
             vehicleCountEl.textContent = data.vehicles_in_roi;
+            
+            // Update Stuck Vehicle Count
+            if (data.stationary_in_roi !== undefined) {
+                document.getElementById('stuck-count').textContent = data.stationary_in_roi;
+            }
             
             // Update Total Live Count
             if (data.total_live_vehicles !== undefined) {
@@ -155,10 +160,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Update Warning Banner
             if (data.is_congested) {
                 warningBanner.classList.remove('hidden');
-                if (data.vehicles_in_roi >= 6 && data.total_live_vehicles >= 10) {
+                const roiStuck = data.stationary_in_roi !== undefined ? data.stationary_in_roi : data.vehicles_in_roi;
+                if (roiStuck >= 6 && data.total_live_vehicles >= 10) {
                     warningBanner.innerHTML = "⚠️ High Congestion (Both)";
-                } else if (data.vehicles_in_roi >= 6) {
-                    warningBanner.innerHTML = "⚠️ ROI Congestion (Yellow Box)";
+                } else if (roiStuck >= 6) {
+                    warningBanner.innerHTML = "⚠️ ROI Stuck Queue (Yellow Box)";
                 } else {
                     warningBanner.innerHTML = "⚠️ Whole Screen Congestion";
                 }
@@ -188,10 +194,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('total-vehicles').textContent = data.total_vehicles;
             }
             
-            // Update Chart
+            // Update Chart with stuck vehicle count for accurate queue timeline
             const currentData = densityChart.data.datasets[0].data;
             currentData.shift(); // Remove oldest
-            currentData.push(data.vehicles_in_roi); // Add newest
+            currentData.push(data.stationary_in_roi !== undefined ? data.stationary_in_roi : data.vehicles_in_roi); // Add newest
             
             // Update dynamic warning limit from backend threshold
             if (data.congestion_threshold !== undefined) {

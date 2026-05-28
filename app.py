@@ -84,6 +84,7 @@ simulator = TrafficSignalSimulator()
 # Global metrics state
 global_metrics = {
     "vehicles_in_roi": 0,
+    "stationary_in_roi": 0,
     "total_live_vehicles": 0,
     "state": RED,
     "time_left": 10.0,
@@ -131,6 +132,7 @@ def generate_frames():
         "truck": set()
     }
 
+    centroid_history = {}
     last_time = time.time()
 
     while True:
@@ -138,9 +140,10 @@ def generate_frames():
         if not ret:
             # Loop video
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            # Reset unique trackers on loop
+            # Reset unique trackers and centroid history on loop
             for k in unique_seen:
                 unique_seen[k].clear()
+            centroid_history.clear()
             continue
             
         results = model.track(frame, persist=True, classes=[0, 1, 2, 3, 5, 7], conf=0.10, iou=0.5, verbose=False)
@@ -212,6 +215,7 @@ def generate_frames():
                     actual_pedestrians.append((px1, py1, px2, py2, p_id))
 
         # Process Vehicles
+        stationary_in_roi = 0
         for x1, y1, x2, y2, track_id, v_type in vehicles_detected:
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
             
@@ -227,15 +231,52 @@ def generate_frames():
                 if cv2.pointPolygonTest(roi_points, pt, False) >= 0:
                     in_roi = True
                     break
+                    
+            # Speed Estimation using Centroid History
+            is_stationary = False
+            estimated_speed = None
+            if track_id is not None:
+                t_now = time.time()
+                tid = int(track_id)
+                if tid not in centroid_history:
+                    centroid_history[tid] = []
+                centroid_history[tid].append((cx, cy, t_now))
+                
+                # Keep rolling history up to 1.0 second
+                centroid_history[tid] = [entry for entry in centroid_history[tid] if t_now - entry[2] <= 1.0]
+                
+                # Calculate speed if we have history covering at least 0.4 seconds
+                history = centroid_history[tid]
+                if len(history) > 2:
+                    dt = history[-1][2] - history[0][2]
+                    if dt >= 0.4:
+                        dx = history[-1][0] - history[0][0]
+                        dy = history[-1][1] - history[0][1]
+                        dist = np.sqrt(dx*dx + dy*dy)
+                        estimated_speed = dist / dt  # pixels per second
+                        
+                        # If displacement speed is less than 18 pixels/sec, it is stationary
+                        if estimated_speed < 18.0:
+                            is_stationary = True
             
-            if in_roi:
-                vehicles_in_roi += 1
-                color = (0, 255, 0)
+            # Color assignment:
+            # - Stationary vehicles are colored Red (0, 0, 255)
+            # - Moving vehicles inside the ROI are colored Green (0, 255, 0)
+            # - Moving vehicles outside the ROI are colored Blue (255, 0, 0)
+            if is_stationary:
+                color = (0, 0, 255) # Red for stuck
+                if in_roi:
+                    stationary_in_roi += 1
+            elif in_roi:
+                color = (0, 255, 0) # Green for moving in ROI
             else:
-                color = (255, 0, 0)
+                color = (255, 0, 0) # Blue for moving outside ROI
                 
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            id_text = f"{v_type.capitalize()} ID:{int(track_id)}" if track_id is not None else f"{v_type.capitalize()}"
+            
+            # Label drawing
+            status_text = " [STUCK]" if is_stationary else " [MOVING]"
+            id_text = f"{v_type.capitalize()} ID:{int(track_id)}{status_text}" if track_id is not None else f"{v_type.capitalize()}"
             cv2.putText(frame, id_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             cv2.circle(frame, (cx, y2), 4, color, -1)
 
@@ -259,8 +300,8 @@ def generate_frames():
         real_dt = current_time - last_time
         last_time = current_time
         
-        # update simulator
-        simulator.update(real_dt, vehicles_in_roi)
+        # update simulator based on stationary density to solve the green-light paradox
+        simulator.update(real_dt, stationary_in_roi)
         
         # Draw ROI
         cv2.polylines(frame, [roi_points], isClosed=True, color=(0, 255, 255), thickness=3)
@@ -268,10 +309,11 @@ def generate_frames():
         # Update metrics global state
         total_live_vehicles = sum(v for k, v in live_counts.items() if k != "person")
         global_metrics["vehicles_in_roi"] = vehicles_in_roi
+        global_metrics["stationary_in_roi"] = stationary_in_roi
         global_metrics["total_live_vehicles"] = total_live_vehicles
         global_metrics["state"] = simulator.state
         global_metrics["time_left"] = max(0.0, simulator.current_duration - simulator.timer)
-        global_metrics["is_congested"] = (vehicles_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
+        global_metrics["is_congested"] = (stationary_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
         global_metrics["congestion_threshold"] = simulator.congestion_threshold
         global_metrics["congestion_threshold_frame"] = 10
         global_metrics["live_counts"] = live_counts
@@ -285,26 +327,28 @@ def generate_frames():
         panel_w = 355
         cv2.rectangle(frame, (10, 10), (10 + panel_w, 10 + panel_h), (0, 0, 0), -1)
         
-        cv2.putText(frame, f"ROI Density: {vehicles_in_roi} vehicles", (20, 40), 
+        cv2.putText(frame, f"ROI Density: {vehicles_in_roi} vehicles", (20, 35), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"Screen Density: {total_live_vehicles} vehicles", (20, 75), 
+        cv2.putText(frame, f"Screen Density: {total_live_vehicles} vehicles", (20, 65), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+        cv2.putText(frame, f"ROI Stuck: {stationary_in_roi} vehicles", (20, 95), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if stationary_in_roi > 0 else (200, 200, 200), 2)
                     
-        is_congested = (vehicles_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
+        is_congested = (stationary_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
         if is_congested:
             warning_text = "CONGESTION WARNING!"
-            if vehicles_in_roi >= simulator.congestion_threshold and total_live_vehicles >= 10:
+            if stationary_in_roi >= simulator.congestion_threshold and total_live_vehicles >= 10:
                 warning_text = "HIGH CONGESTION (BOTH)"
-            elif vehicles_in_roi >= simulator.congestion_threshold:
+            elif stationary_in_roi >= simulator.congestion_threshold:
                 warning_text = "ROI CONGESTION"
             else:
                 warning_text = "SCREEN CONGESTION"
-            cv2.putText(frame, warning_text, (20, 110), 
+            cv2.putText(frame, warning_text, (20, 125), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                         
-        cv2.putText(frame, f"Signal: {simulator.state}", (20, 145), 
+        cv2.putText(frame, f"Signal: {simulator.state}", (20, 155), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"Time left: {max(0, simulator.current_duration - simulator.timer):.1f}s", (20, 180), 
+        cv2.putText(frame, f"Time left: {max(0, simulator.current_duration - simulator.timer):.1f}s", (20, 185), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     
         if simulator.state == GREEN and simulator.current_duration > simulator.base_green_time:
