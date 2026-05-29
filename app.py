@@ -32,67 +32,156 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-RED = "RED"
-GREEN = "GREEN"
-YELLOW = "YELLOW"
+# Coordinated Signal States
+LANE1_GREEN = "LANE1_GREEN"
+LANE1_YELLOW = "LANE1_YELLOW"
+LANE2_GREEN = "LANE2_GREEN"
+LANE2_YELLOW = "LANE2_YELLOW"
 
-class TrafficSignalSimulator:
+class CoordinatedSignalSimulator:
     def __init__(self):
-        self.state = RED
+        # Adaptive system state
+        self.state = LANE1_GREEN
         self.timer = 0.0
-        self.base_red_time = 10.0
         self.base_green_time = 10.0
         self.yellow_time = 3.0
-        
         self.max_green_time = 20.0
-        self.min_red_time = 5.0
+        self.alpha = 2.0
         
-        self.current_duration = self.base_red_time
+        self.current_duration = self.base_green_time
         self.congestion_threshold = 6
+        
+        # Parallel Fixed-Time system state
+        self.fixed_state = LANE1_GREEN
+        self.fixed_timer = 0.0
+        self.fixed_green_duration = 15.0
+        self.fixed_yellow_duration = 3.0
+        
+        # Performance Metrics Accumulators
+        self.adaptive_total_wait = 0.0
+        self.fixed_total_wait = 0.0
+        self.vehicles_cleared_adaptive = 0
+        self.vehicles_cleared_fixed = 0
+        
+        # Decision Log Feed (keeps latest 5 logs)
+        self.decision_logs = ["Coordinated dual-lane swarm control active."]
 
-    def update(self, dt, vehicle_count):
+    def log_decision(self, message):
+        timestamp = time.strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] {message}"
+        self.decision_logs.append(log_entry)
+        if len(self.decision_logs) > 5:
+            self.decision_logs.pop(0)
+
+    def update(self, dt, lane1_stuck, lane2_stuck):
+        # 1. Update Adaptive State Machine
         self.timer += dt
         
-        if self.state == GREEN:
-            adaptive_duration = self.base_green_time
-            if vehicle_count >= self.congestion_threshold:
-                adaptive_duration = min(self.max_green_time, self.base_green_time + (vehicle_count - self.congestion_threshold) * 2.0)
+        if self.state == LANE1_GREEN:
+            active_stuck = lane1_stuck
+            waiting_stuck = lane2_stuck
+            
+            # Dynamic Green Allocation Formula
+            adaptive_duration = min(self.max_green_time, self.base_green_time + self.alpha * active_stuck)
             self.current_duration = adaptive_duration
-            if self.timer >= self.current_duration:
-                self.state = YELLOW
+            
+            # Swarm Optimization: Early switch if waiting lane is highly congested and active lane base green is done
+            if waiting_stuck >= self.congestion_threshold and self.timer >= self.base_green_time and active_stuck < waiting_stuck:
+                self.log_decision(f"Swarm Priority: Switching to Lane 2 early due to heavy queue ({waiting_stuck} vehicles).")
+                self.state = LANE1_YELLOW
+                self.timer = 0.0
+                self.current_duration = self.yellow_time
+            elif self.timer >= self.current_duration:
+                self.log_decision(f"Adaptive timer expired for Lane 1 ({self.current_duration:.1f}s). Switching to Lane 2.")
+                self.state = LANE1_YELLOW
                 self.timer = 0.0
                 self.current_duration = self.yellow_time
                 
-        elif self.state == YELLOW:
+        elif self.state == LANE1_YELLOW:
             if self.timer >= self.current_duration:
-                self.state = RED
+                self.state = LANE2_GREEN
                 self.timer = 0.0
-                self.current_duration = self.base_red_time
+                self.current_duration = self.base_green_time
                 
-        elif self.state == RED:
-            adaptive_duration = self.base_red_time
-            if vehicle_count >= self.congestion_threshold + 3:
-                adaptive_duration = self.min_red_time
+        elif self.state == LANE2_GREEN:
+            active_stuck = lane2_stuck
+            waiting_stuck = lane1_stuck
+            
+            # Dynamic Green Allocation Formula
+            adaptive_duration = min(self.max_green_time, self.base_green_time + self.alpha * active_stuck)
             self.current_duration = adaptive_duration
+            
+            # Swarm Optimization: Early switch
+            if waiting_stuck >= self.congestion_threshold and self.timer >= self.base_green_time and active_stuck < waiting_stuck:
+                self.log_decision(f"Swarm Priority: Switching to Lane 1 early due to heavy queue ({waiting_stuck} vehicles).")
+                self.state = LANE2_YELLOW
+                self.timer = 0.0
+                self.current_duration = self.yellow_time
+            elif self.timer >= self.current_duration:
+                self.log_decision(f"Adaptive timer expired for Lane 2 ({self.current_duration:.1f}s). Switching to Lane 1.")
+                self.state = LANE2_YELLOW
+                self.timer = 0.0
+                self.current_duration = self.yellow_time
+                
+        elif self.state == LANE2_YELLOW:
             if self.timer >= self.current_duration:
-                self.state = GREEN
+                self.state = LANE1_GREEN
                 self.timer = 0.0
                 self.current_duration = self.base_green_time
 
-simulator = TrafficSignalSimulator()
+        # 2. Update Fixed-Time State Machine (Shadow simulation)
+        self.fixed_timer += dt
+        if self.fixed_state == LANE1_GREEN:
+            if self.fixed_timer >= self.fixed_green_duration:
+                self.fixed_state = LANE1_YELLOW
+                self.fixed_timer = 0.0
+        elif self.fixed_state == LANE1_YELLOW:
+            if self.fixed_timer >= self.fixed_yellow_duration:
+                self.fixed_state = LANE2_GREEN
+                self.fixed_timer = 0.0
+        elif self.fixed_state == LANE2_GREEN:
+            if self.fixed_timer >= self.fixed_green_duration:
+                self.fixed_state = LANE2_YELLOW
+                self.fixed_timer = 0.0
+        elif self.fixed_state == LANE2_YELLOW:
+            if self.fixed_timer >= self.fixed_yellow_duration:
+                self.fixed_state = LANE1_GREEN
+                self.fixed_timer = 0.0
 
-# Global metrics state
+        # 3. Accumulate Waiting Times for Comparison
+        if self.state in [LANE2_GREEN, LANE2_YELLOW]:
+            self.adaptive_total_wait += lane1_stuck * dt
+        if self.state in [LANE1_GREEN, LANE1_YELLOW]:
+            self.adaptive_total_wait += lane2_stuck * dt
+            
+        if self.fixed_state in [LANE2_GREEN, LANE2_YELLOW]:
+            self.fixed_total_wait += lane1_stuck * dt
+        if self.fixed_state in [LANE1_GREEN, LANE1_YELLOW]:
+            self.fixed_total_wait += lane2_stuck * dt
+
+simulator = CoordinatedSignalSimulator()
+
+# Expanded Coordinated Global Metrics State
 global_metrics = {
-    "vehicles_in_roi": 0,
-    "stationary_in_roi": 0,
+    "lane1_density": 0,
+    "lane2_density": 0,
+    "lane1_stuck": 0,
+    "lane2_stuck": 0,
+    "lane1_congestion": "LOW",
+    "lane2_congestion": "LOW",
     "total_live_vehicles": 0,
-    "state": RED,
+    "state": LANE1_GREEN,
+    "fixed_state": LANE1_GREEN,
     "time_left": 10.0,
-    "is_congested": False,
-    "congestion_threshold": 6,
-    "congestion_threshold_frame": 10,
     "live_counts": {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0},
-    "total_counts": {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
+    "total_counts": {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0},
+    "total_vehicles": 0,
+    "adaptive_total_wait": 0.0,
+    "fixed_total_wait": 0.0,
+    "efficiency_gain": 0.0,
+    "vehicles_cleared_adaptive": 0,
+    "vehicles_cleared_fixed": 0,
+    "decision_logs": []
 }
 
 def generate_frames():
@@ -108,11 +197,19 @@ def generate_frames():
     if not fps or np.isnan(fps) or fps == 0: fps = 30.0
     dt = 1.0 / fps
 
-    roi_points = np.array([
+    # Split road down the middle into two lanes
+    roi_points_lane1 = np.array([
         [int(width * 0.02), int(height * 0.95)],
+        [int(width * 0.50), int(height * 0.95)],
+        [int(width * 0.50), int(height * 0.45)],
+        [int(width * 0.15), int(height * 0.45)]
+    ], np.int32)
+
+    roi_points_lane2 = np.array([
+        [int(width * 0.50), int(height * 0.95)],
         [int(width * 0.98), int(height * 0.95)],
         [int(width * 0.85), int(height * 0.45)],
-        [int(width * 0.15), int(height * 0.45)]
+        [int(width * 0.50), int(height * 0.45)]
     ], np.int32)
 
     class_names = {
@@ -136,6 +233,15 @@ def generate_frames():
     frame_count = 0
     last_time = time.time()
 
+    # Trackers for cleared vehicles
+    lane1_prev_ids = set()
+    lane2_prev_ids = set()
+
+    cached_boxes = None
+    cached_clss = None
+    cached_confs = None
+    cached_ids = None
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -146,37 +252,48 @@ def generate_frames():
                 unique_seen[k].clear()
             centroid_history.clear()
             frame_count = 0
+            lane1_prev_ids.clear()
+            lane2_prev_ids.clear()
+            cached_boxes = None
             continue
             
         frame_count += 1
             
-        results = model.track(frame, persist=True, classes=[0, 1, 2, 3, 5, 7], conf=0.10, iou=0.5, verbose=False)
-        vehicles_in_roi = 0
-        live_counts = {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
+        # Run YOLO tracking every 2nd frame to double the processing speed
+        if frame_count % 2 == 1 or cached_boxes is None:
+            results = model.track(frame, persist=True, classes=[0, 1, 2, 3, 5, 7], conf=0.10, iou=0.5, verbose=False)
+            if results[0].boxes is not None:
+                cached_boxes = results[0].boxes.xyxy.cpu().numpy()
+                cached_clss = results[0].boxes.cls.cpu().numpy()
+                cached_confs = results[0].boxes.conf.cpu().numpy()
+                cached_ids = results[0].boxes.id.cpu().numpy() if results[0].boxes.id is not None else [None] * len(cached_boxes)
+            else:
+                cached_boxes = []
+                cached_clss = []
+                cached_confs = []
+                cached_ids = []
+                
+        boxes = cached_boxes
+        clss = cached_clss
+        confs = cached_confs
+        ids = cached_ids
         
         persons_detected = []
         vehicles_detected = []
         
-        if results[0].boxes is not None:
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            clss = results[0].boxes.cls.cpu().numpy()
-            confs = results[0].boxes.conf.cpu().numpy()
-            ids = results[0].boxes.id.cpu().numpy() if results[0].boxes.id is not None else [None] * len(boxes)
+        for box, cls_idx, conf, track_id in zip(boxes, clss, confs, ids):
+            x1, y1, x2, y2 = map(int, box)
+            cls_idx = int(cls_idx)
+            v_type = class_names.get(cls_idx, "car")
             
-            for box, cls_idx, conf, track_id in zip(boxes, clss, confs, ids):
-                x1, y1, x2, y2 = map(int, box)
-                cls_idx = int(cls_idx)
-                v_type = class_names.get(cls_idx, "car")
-                
-                if v_type == "person":
-                    # Filter out weak standalone pedestrian detections to avoid noise
-                    if conf < 0.30:
-                        continue
-                    persons_detected.append((x1, y1, x2, y2, track_id, conf))
-                else:
-                    vehicles_detected.append((x1, y1, x2, y2, track_id, v_type))
+            if v_type == "person":
+                if conf < 0.30:
+                    continue
+                persons_detected.append((x1, y1, x2, y2, track_id, conf))
+            else:
+                vehicles_detected.append((x1, y1, x2, y2, track_id, v_type))
                     
-        # Filter persons to exclude riders (persons overlapping with motorcycles/vehicles)
+        # Filter persons to exclude riders
         def box_intersection_fraction(box_person, box_vehicle):
             px1, py1, px2, py2 = box_person[:4]
             vx1, vy1, vx2, vy2 = box_vehicle[:4]
@@ -196,62 +313,75 @@ def generate_frames():
             px1, py1, px2, py2, p_id, p_conf = p_box
             is_rider = False
             for v_box in vehicles_detected:
-                # Lower overlap threshold to 0.15 to handle high-perspective offset
                 if box_intersection_fraction((px1, py1, px2, py2), v_box[:4]) > 0.15:
                     is_rider = True
                     break
             
             if is_rider:
-                # Discard duplicate person bounding box overlapping with a vehicle
                 continue
                 
-            # Heuristic: Since this is a high-speed motorway with no pedestrian walking lanes,
-            # any standalone person detection inside the active lanes or ROI is a motorcycle rider
-            # whose bike was not detected separately by YOLO. Let's auto-correct them to motorcycle!
             cx, cy = (px1 + px2) // 2, (py1 + py2) // 2
-            in_roi_or_lanes = cv2.pointPolygonTest(roi_points, (cx, py2), False) >= 0 or (px2 < width * 0.9)
+            in_roi_or_lanes = (cv2.pointPolygonTest(roi_points_lane1, (cx, py2), False) >= 0 or 
+                               cv2.pointPolygonTest(roi_points_lane2, (cx, py2), False) >= 0 or 
+                               (px2 < width * 0.9))
             
             if in_roi_or_lanes:
                 vehicles_detected.append((px1, py1, px2, py2, p_id, "motorcycle"))
             else:
-                # Only keep as actual pedestrian if high confidence and completely off-road
                 if p_conf >= 0.40:
                     actual_pedestrians.append((px1, py1, px2, py2, p_id))
 
         # Process Vehicles
-        stationary_in_roi = 0
+        lane1_density = 0
+        lane2_density = 0
+        lane1_stuck = 0
+        lane2_stuck = 0
+        live_counts = {"person": 0, "car": 0, "motorcycle": 0, "bus": 0, "truck": 0}
+        
+        lane1_curr_ids = set()
+        lane2_curr_ids = set()
+        
         for x1, y1, x2, y2, track_id, v_type in vehicles_detected:
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            tid = int(track_id) if track_id is not None else None
             
             live_counts[v_type] += 1
-            if track_id is not None:
-                unique_seen[v_type].add(int(track_id))
+            if tid is not None:
+                unique_seen[v_type].add(tid)
                 
             points_to_check = [
                 (cx, cy), (x1, y1), (x2, y1), (x1, y2), (x2, y2), (cx, y1), (cx, y2)
             ]
-            in_roi = False
+            
+            in_roi_lane1 = False
+            in_roi_lane2 = False
             for pt in points_to_check:
-                if cv2.pointPolygonTest(roi_points, pt, False) >= 0:
-                    in_roi = True
+                if cv2.pointPolygonTest(roi_points_lane1, pt, False) >= 0:
+                    in_roi_lane1 = True
+                    break
+                if cv2.pointPolygonTest(roi_points_lane2, pt, False) >= 0:
+                    in_roi_lane2 = True
                     break
             
-            if in_roi:
-                vehicles_in_roi += 1
+            if in_roi_lane1:
+                lane1_density += 1
+                if tid is not None:
+                    lane1_curr_ids.add(tid)
+            elif in_roi_lane2:
+                lane2_density += 1
+                if tid is not None:
+                    lane2_curr_ids.add(tid)
                 
-            # Speed Estimation using Centroid History (Frame-based time to bypass wall-clock lags)
+            # Speed Estimation using Centroid History
             is_stationary = False
             estimated_speed = None
-            if track_id is not None:
-                tid = int(track_id)
+            if tid is not None:
                 if tid not in centroid_history:
                     centroid_history[tid] = []
                 centroid_history[tid].append((cx, cy, frame_count))
                 
-                # Keep rolling history up to 30 frames (1.0 second of video playback time)
                 centroid_history[tid] = [entry for entry in centroid_history[tid] if entry[2] >= frame_count - 30]
                 
-                # Calculate speed if we have history covering at least 5 frames (0.15 seconds of video playback)
                 history = centroid_history[tid]
                 if len(history) > 2:
                     df = history[-1][2] - history[0][2]
@@ -260,30 +390,32 @@ def generate_frames():
                         dx = history[-1][0] - history[0][0]
                         dy = history[-1][1] - history[0][1]
                         dist = np.sqrt(dx*dx + dy*dy)
-                        estimated_speed = dist / dt_play  # pixels per video second
+                        estimated_speed = dist / dt_play
                         
-                        # An optimized threshold of 18.0 pixels/sec accounts for YOLO bounding box jitter and perspective compression
                         if estimated_speed < 18.0:
                             is_stationary = True
             
             # Color assignment:
-            # - Stationary vehicles are colored Red (0, 0, 255)
-            # - Moving vehicles inside the ROI are colored Green (0, 255, 0)
-            # - Moving vehicles outside the ROI are colored Blue (255, 0, 0)
+            # - Stationary: Red (0, 0, 255)
+            # - Moving Lane 1: Cyan (255, 255, 0)
+            # - Moving Lane 2: Purple/Magenta (255, 0, 255)
+            # - Moving Outside: Blue (255, 0, 0)
             if is_stationary:
                 color = (0, 0, 255) # Red for stuck
-                if in_roi:
-                    stationary_in_roi += 1
-            elif in_roi:
-                color = (0, 255, 0) # Green for moving in ROI
+                if in_roi_lane1:
+                    lane1_stuck += 1
+                elif in_roi_lane2:
+                    lane2_stuck += 1
+            elif in_roi_lane1:
+                color = (255, 255, 0) # Cyan for moving in Lane 1
+            elif in_roi_lane2:
+                color = (255, 0, 255) # Purple/Magenta for moving in Lane 2
             else:
-                color = (255, 0, 0) # Blue for moving outside ROI
+                color = (255, 0, 0) # Blue for moving outside
                 
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            
-            # Label drawing
             status_text = " [STUCK]" if is_stationary else " [MOVING]"
-            id_text = f"{v_type.capitalize()} ID:{int(track_id)}{status_text}" if track_id is not None else f"{v_type.capitalize()}"
+            id_text = f"{v_type.capitalize()} ID:{tid}{status_text}" if tid is not None else f"{v_type.capitalize()}"
             cv2.putText(frame, id_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             cv2.circle(frame, (cx, y2), 4, color, -1)
 
@@ -301,69 +433,129 @@ def generate_frames():
             id_text = f"Pedestrian ID:{int(track_id)}" if track_id is not None else "Pedestrian"
             cv2.putText(frame, id_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-        # We compute real dt for smooth simulation, or just use 1/fps
-        # For a web stream it's often better to use real time elapsed if processing takes long
+        # Check which vehicles have cleared (exited active green lane ROI)
+        for tid in lane1_prev_ids:
+            if tid not in lane1_curr_ids:
+                if simulator.state in [LANE1_GREEN, LANE1_YELLOW]:
+                    simulator.vehicles_cleared_adaptive += 1
+                if simulator.fixed_state in [LANE1_GREEN, LANE1_YELLOW]:
+                    simulator.vehicles_cleared_fixed += 1
+                    
+        for tid in lane2_prev_ids:
+            if tid not in lane2_curr_ids:
+                if simulator.state in [LANE2_GREEN, LANE2_YELLOW]:
+                    simulator.vehicles_cleared_adaptive += 1
+                if simulator.fixed_state in [LANE2_GREEN, LANE2_YELLOW]:
+                    simulator.vehicles_cleared_fixed += 1
+                    
+        lane1_prev_ids = lane1_curr_ids
+        lane2_prev_ids = lane2_curr_ids
+
         current_time = time.time()
         real_dt = current_time - last_time
         last_time = current_time
         
-        # update simulator based on stationary density to solve the green-light paradox
-        simulator.update(real_dt, stationary_in_roi)
+        # Update simulator based on both lane stuck vehicles
+        simulator.update(real_dt, lane1_stuck, lane2_stuck)
         
-        # Draw ROI
-        cv2.polylines(frame, [roi_points], isClosed=True, color=(0, 255, 255), thickness=3)
+        # Draw ROI Polygons
+        cv2.polylines(frame, [roi_points_lane1], isClosed=True, color=(255, 255, 0), thickness=3) # Cyan
+        cv2.polylines(frame, [roi_points_lane2], isClosed=True, color=(255, 0, 255), thickness=3) # Purple
+        
+        # Helper to draw visual traffic light
+        def draw_traffic_light(img, x, y, active_color):
+            cv2.rectangle(img, (x - 20, y - 60), (x + 20, y + 60), (30, 30, 30), -1)
+            cv2.rectangle(img, (x - 20, y - 60), (x + 20, y + 60), (60, 60, 60), 2)
+            r_color = (0, 0, 255) if active_color == "RED" else (0, 0, 40)
+            cv2.circle(img, (x, y - 40), 12, r_color, -1)
+            y_color = (0, 255, 255) if active_color == "YELLOW" else (0, 40, 40)
+            cv2.circle(img, (x, y), 12, y_color, -1)
+            g_color = (0, 255, 0) if active_color == "GREEN" else (0, 40, 0)
+            cv2.circle(img, (x, y + 40), 12, g_color, -1)
+            
+        # Draw both traffic lights
+        l1_color = "GREEN" if simulator.state == LANE1_GREEN else ("YELLOW" if simulator.state == LANE1_YELLOW else "RED")
+        draw_traffic_light(frame, 60, 380, l1_color)
+        cv2.putText(frame, "LANE 1", (35, 305), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+        l2_color = "GREEN" if simulator.state == LANE2_GREEN else ("YELLOW" if simulator.state == LANE2_YELLOW else "RED")
+        draw_traffic_light(frame, width - 60, 380, l2_color)
+        cv2.putText(frame, "LANE 2", (width - 85, 305), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+        # Draw Swarm Decision Logs box on-stream
+        log_h = 130
+        log_w = 480
+        log_y_start = height - 145
+        cv2.rectangle(frame, (10, log_y_start), (10 + log_w, log_y_start + log_h), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, log_y_start), (10 + log_w, log_y_start + log_h), (0, 255, 255), 1)
+        cv2.putText(frame, "SWARM OPTIMIZER DECISIONS:", (20, log_y_start + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+        for idx, log in enumerate(simulator.decision_logs[-3:]):
+            cv2.putText(frame, log[:65], (20, log_y_start + 55 + idx * 22), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+
+        # Congestion classification mapping
+        def get_congestion_level(stuck_count):
+            if stuck_count >= 6:
+                return "HIGH"
+            elif stuck_count >= 3:
+                return "MEDIUM"
+            else:
+                return "LOW"
+                
+        lane1_congestion = get_congestion_level(lane1_stuck)
+        lane2_congestion = get_congestion_level(lane2_stuck)
+        total_live_vehicles = sum(v for k, v in live_counts.items() if k != "person")
 
         # Update metrics global state
-        total_live_vehicles = sum(v for k, v in live_counts.items() if k != "person")
-        global_metrics["vehicles_in_roi"] = vehicles_in_roi
-        global_metrics["stationary_in_roi"] = stationary_in_roi
+        global_metrics["lane1_density"] = lane1_density
+        global_metrics["lane2_density"] = lane2_density
+        global_metrics["lane1_stuck"] = lane1_stuck
+        global_metrics["lane2_stuck"] = lane2_stuck
+        global_metrics["lane1_congestion"] = lane1_congestion
+        global_metrics["lane2_congestion"] = lane2_congestion
         global_metrics["total_live_vehicles"] = total_live_vehicles
         global_metrics["state"] = simulator.state
+        global_metrics["fixed_state"] = simulator.fixed_state
         global_metrics["time_left"] = max(0.0, simulator.current_duration - simulator.timer)
-        global_metrics["is_congested"] = (stationary_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
-        global_metrics["congestion_threshold"] = simulator.congestion_threshold
-        global_metrics["congestion_threshold_frame"] = 10
         global_metrics["live_counts"] = live_counts
         
         totals = {k: len(v) for k, v in unique_seen.items()}
         global_metrics["total_counts"] = totals
         global_metrics["total_vehicles"] = sum(v for k, v in totals.items() if k != "person")
+        
+        global_metrics["adaptive_total_wait"] = simulator.adaptive_total_wait
+        global_metrics["fixed_total_wait"] = simulator.fixed_total_wait
+        
+        if simulator.fixed_total_wait > 0:
+            gain = ((simulator.fixed_total_wait - simulator.adaptive_total_wait) / simulator.fixed_total_wait) * 100.0
+            global_metrics["efficiency_gain"] = max(0.0, gain)
+        else:
+            global_metrics["efficiency_gain"] = 0.0
+            
+        global_metrics["vehicles_cleared_adaptive"] = simulator.vehicles_cleared_adaptive
+        global_metrics["vehicles_cleared_fixed"] = simulator.vehicles_cleared_fixed
+        global_metrics["decision_logs"] = list(simulator.decision_logs)
 
         # Draw Information Panel natively on video to match sample
         panel_h = 240
         panel_w = 355
         cv2.rectangle(frame, (10, 10), (10 + panel_w, 10 + panel_h), (0, 0, 0), -1)
         
-        cv2.putText(frame, f"ROI Density: {vehicles_in_roi} vehicles", (20, 35), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"Screen Density: {total_live_vehicles} vehicles", (20, 65), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
-        cv2.putText(frame, f"ROI Stuck: {stationary_in_roi} vehicles", (20, 95), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if stationary_in_roi > 0 else (200, 200, 200), 2)
-                    
-        is_congested = (stationary_in_roi >= simulator.congestion_threshold) or (total_live_vehicles >= 10)
-        if is_congested:
-            warning_text = "CONGESTION WARNING!"
-            if stationary_in_roi >= simulator.congestion_threshold and total_live_vehicles >= 10:
-                warning_text = "HIGH CONGESTION (BOTH)"
-            elif stationary_in_roi >= simulator.congestion_threshold:
-                warning_text = "ROI CONGESTION"
-            else:
-                warning_text = "SCREEN CONGESTION"
-            cv2.putText(frame, warning_text, (20, 125), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(frame, f"L1 Density: {lane1_density} | Stuck: {lane1_stuck}", (20, 35), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, f"L2 Density: {lane2_density} | Stuck: {lane2_stuck}", (20, 65), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, f"Screen Density: {total_live_vehicles} vehicles", (20, 95), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+        
+        cv2.putText(frame, f"L1 Congestion: {lane1_congestion}", (20, 125), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if lane1_congestion == "HIGH" else ((0, 165, 255) if lane1_congestion == "MEDIUM" else (0, 255, 0)), 2)
+        cv2.putText(frame, f"L2 Congestion: {lane2_congestion}", (20, 155), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if lane2_congestion == "HIGH" else ((0, 165, 255) if lane2_congestion == "MEDIUM" else (0, 255, 0)), 2)
                         
-        cv2.putText(frame, f"Signal: {simulator.state}", (20, 155), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f"Time left: {max(0, simulator.current_duration - simulator.timer):.1f}s", (20, 185), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    
-        if simulator.state == GREEN and simulator.current_duration > simulator.base_green_time:
-            cv2.putText(frame, "ADAPTIVE: GREEN EXTENDED", (20, 215), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        if simulator.state == RED and simulator.current_duration < simulator.base_red_time:
-            cv2.putText(frame, "ADAPTIVE: EARLY GREEN PENDING", (20, 215), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+        cv2.putText(frame, f"Signal State: {simulator.state}", (20, 185), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, f"Time left: {max(0, simulator.current_duration - simulator.timer):.1f}s", (20, 215), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         ret, buffer = cv2.imencode('.jpg', frame)
         frame = buffer.tobytes()
@@ -377,7 +569,15 @@ def index(request: Request):
 
 @app.get("/video_feed")
 def video_feed():
-    return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(
+        generate_frames(), 
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, private",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 @app.get("/api/metrics")
 def get_metrics():

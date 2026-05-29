@@ -6,132 +6,215 @@
     <title>CyberGuard | Traffic Vision</title>
     <!-- Use Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=12">
+    <link rel="stylesheet" href="/static/style.css?v=109">
 </head>
 <body>
     <div class="app-container single-frame">
         <!-- Dashboard Content Grid -->
         <main class="dashboard-grid">
             
-            <!-- COLUMN 1: Live Camera Feed -->
-            <section class="video-section glass">
-                <div class="video-header">
-                    <h2>Live Camera Feed</h2>
-                    <div class="status-indicator">
-                        <span class="dot pulse"></span> Live
+            <!-- COLUMN 1: Left Panel (Video, Breakdown, Graph) -->
+            <div class="column-left">
+                <!-- Live Camera Feed -->
+                <section class="video-section glass">
+                    <div class="video-header">
+                        <h2>Live Camera Feed</h2>
+                        <div class="status-indicator">
+                            <span class="dot pulse"></span> Live
+                        </div>
+                    </div>
+                    <div class="video-wrapper">
+                        <img id="video-stream" src="/video_feed" alt="Live Traffic Feed">
+                    </div>
+                </section>
+
+                <!-- Bottom Row for Breakdown and Graph side-by-side -->
+                <div class="left-bottom-row">
+                    <!-- Total Tracked Breakdown -->
+                    <div class="metrics-card glass breakdown-card">
+                        <div class="breakdown-header">
+                            <h2>Total Breakdown</h2>
+                            <div class="metric-value inline-val">
+                                <span id="total-vehicles">0</span>
+                                <span class="unit">vehicles</span>
+                            </div>
+                        </div>
+                        
+                        <div class="breakdown-grid">
+                            <div class="breakdown-item">
+                                <div class="item-left">
+                                    <span class="item-name">Cars</span>
+                                </div>
+                                <span class="item-val" id="count-cars">0 <span class="total-badge">Total: 0</span></span>
+                            </div>
+                            <div class="breakdown-item">
+                                <div class="item-left">
+                                    <span class="item-name">Bikes</span>
+                                </div>
+                                <span class="item-val" id="count-bikes">0 <span class="total-badge">Total: 0</span></span>
+                            </div>
+                            <div class="breakdown-item">
+                                <div class="item-left">
+                                    <span class="item-name">Buses</span>
+                                </div>
+                                <span class="item-val" id="count-buses">0 <span class="total-badge">Total: 0</span></span>
+                            </div>
+                            <div class="breakdown-item">
+                                <div class="item-left">
+                                    <span class="item-name">Trucks</span>
+                                </div>
+                                <span class="item-val" id="count-trucks">0 <span class="total-badge">Total: 0</span></span>
+                            </div>
+                            <div class="breakdown-item full-width">
+                                <div class="item-left">
+                                    <span class="item-name">Pedestrians</span>
+                                </div>
+                                <span class="item-val" id="count-pedestrians">0 <span class="total-badge">Total: 0</span></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Density Graph -->
+                    <div class="graph-card glass">
+                        <h2>Dual-Lane Queue Timeline</h2>
+                        <div class="chart-container">
+                            <canvas id="densityChart"></canvas>
+                        </div>
                     </div>
                 </div>
-                <div class="video-wrapper">
-                    <img id="video-stream" src="/video_feed" alt="Live Traffic Feed">
-                </div>
-            </section>
+            </div>
 
-            <!-- COLUMN 2: Traffic Density & Breakdown -->
+            <!-- COLUMN 2: Coordinated Dual-Lane Metrics & Comparative Analytics -->
             <section class="column-mid">
-                <!-- Density Metrics -->
+                <!-- Dual-Lane Traffic Density -->
                 <div class="metrics-card glass">
-                    <h2>Traffic Density</h2>
-                    <div class="density-split">
-                        <div class="density-box">
-                            <span class="density-label">ROI Density</span>
-                            <div class="metric-value small">
-                                <span id="vehicle-count">0</span>
-                                <span class="unit">vehicles</span>
+                    <h2>Lane Traffic Density</h2>
+                    <div class="dual-lane-grid">
+                        <!-- LANE 1 -->
+                        <div class="lane-col border-cyan">
+                            <h3>LANE 1 (Left)</h3>
+                            <div class="density-box">
+                                <span class="density-label">Queue / Stuck</span>
+                                <div class="metric-value small color-cyan">
+                                    <span id="l1-density">0</span> / <span id="l1-stuck" style="color: var(--red-glow); font-weight: bold;">0</span>
+                                </div>
+                            </div>
+                            <div class="density-box">
+                                <span class="density-label">Congestion Level</span>
+                                <span id="l1-congestion-badge" class="congestion-badge low">LOW</span>
                             </div>
                         </div>
-                        <div class="density-box">
-                            <span class="density-label">ROI Stuck (Stopped)</span>
-                            <div class="metric-value small" style="color: var(--red-glow);">
-                                <span id="stuck-count">0</span>
-                                <span class="unit">vehicles</span>
+                        <!-- LANE 2 -->
+                        <div class="lane-col border-magenta">
+                            <h3>LANE 2 (Right)</h3>
+                            <div class="density-box">
+                                <span class="density-label">Queue / Stuck</span>
+                                <div class="metric-value small color-magenta">
+                                    <span id="l2-density">0</span> / <span id="l2-stuck" style="color: var(--red-glow); font-weight: bold;">0</span>
+                                </div>
                             </div>
-                        </div>
-                        <div class="density-box full-width">
-                            <span class="density-label">Total Screen</span>
-                            <div class="metric-value small">
-                                <span id="total-live-count">0</span>
-                                <span class="unit">vehicles</span>
+                            <div class="density-box">
+                                <span class="density-label">Congestion Level</span>
+                                <span id="l2-congestion-badge" class="congestion-badge low">LOW</span>
                             </div>
                         </div>
                     </div>
-                    <div id="congestion-warning" class="warning-banner hidden">
-                        ⚠️ High Congestion
+                    <div class="density-box full-width">
+                        <span class="density-label">Total Screen Live Count</span>
+                        <div class="metric-value small">
+                            <span id="total-live-count">0</span>
+                            <span class="unit">vehicles</span>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Vehicle Type Breakdown -->
-                <div class="metrics-card glass flex-grow">
-                    <h2>Total Tracked</h2>
-                    <div class="metric-value small-gap">
-                        <span id="total-vehicles">0</span>
-                        <span class="unit">vehicles</span>
-                    </div>
+                <!-- Comparative Performance Analytics -->
+                <div class="metrics-card glass">
+                    <h2>Comparative Performance</h2>
+                    <div class="comparison-grid">
+                        <div class="comparison-metric">
+                            <span class="comp-label">Avg Stuck Delay</span>
+                            <div class="comp-bars">
+                                <div class="comp-bar-row">
+                                    <span class="bar-name">Adaptive:</span>
+                                    <div class="bar-wrapper"><div id="adaptive-delay-bar" class="bar adaptive-bar" style="width: 20%"></div></div>
+                                    <span id="adaptive-delay-val" class="bar-val">0.0s</span>
+                                </div>
+                                <div class="comp-bar-row">
+                                    <span class="bar-name">Fixed-Time:</span>
+                                    <div class="bar-wrapper"><div id="fixed-delay-bar" class="bar fixed-bar" style="width: 50%"></div></div>
+                                    <span id="fixed-delay-val" class="bar-val">0.0s</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="comparison-metric">
+                            <span class="comp-label">Vehicles Cleared</span>
+                            <div class="comp-stats">
+                                <div class="stat-box">
+                                    <span class="stat-name">Adaptive</span>
+                                    <span id="adaptive-cleared" class="stat-val font-green">0</span>
+                                </div>
+                                <div class="stat-box">
+                                    <span class="stat-name">Fixed-Time</span>
+                                    <span id="fixed-cleared" class="stat-val font-secondary">0</span>
+                                </div>
+                              </div>
+                            </div>
+                        </div>
                     
-                    <hr class="card-divider">
-                    
-                    <div class="breakdown-grid">
-                        <div class="breakdown-item">
-                            <div class="item-left">
-                                <span class="item-icon">🚗</span>
-                                <span class="item-name">Cars</span>
-                            </div>
-                            <span class="item-val" id="count-cars">0 <span class="total-badge">Total: 0</span></span>
-                        </div>
-                        <div class="breakdown-item">
-                            <div class="item-left">
-                                <span class="item-icon">🏍️</span>
-                                <span class="item-name">Bikes</span>
-                            </div>
-                            <span class="item-val" id="count-bikes">0 <span class="total-badge">Total: 0</span></span>
-                        </div>
-                        <div class="breakdown-item">
-                            <div class="item-left">
-                                <span class="item-icon">🚌</span>
-                                <span class="item-name">Buses</span>
-                            </div>
-                            <span class="item-val" id="count-buses">0 <span class="total-badge">Total: 0</span></span>
-                        </div>
-                        <div class="breakdown-item">
-                            <div class="item-left">
-                                <span class="item-icon">🚚</span>
-                                <span class="item-name">Trucks</span>
-                            </div>
-                            <span class="item-val" id="count-trucks">0 <span class="total-badge">Total: 0</span></span>
-                        </div>
-                        <div class="breakdown-item">
-                            <div class="item-left">
-                                <span class="item-icon">🚶</span>
-                                <span class="item-name">Pedestrians</span>
-                            </div>
-                            <span class="item-val" id="count-pedestrians">0 <span class="total-badge">Total: 0</span></span>
+                    <div class="efficiency-banner">
+                        <span class="eff-title">SWARM EFFICIENCY BOOST</span>
+                        <div class="eff-badge-wrapper">
+                            <span id="efficiency-gain-badge" class="efficiency-badge glow-green">0.0%</span>
+                            <span class="eff-sub">Delay Reduction</span>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- COLUMN 3: Adaptive Signal & Graph -->
+            <!-- COLUMN 3: Coordinated Signal Controllers & Swarm Log -->
             <section class="column-right">
-                <!-- Adaptive Signal Simulator -->
+                <!-- Coordinated Signal Simulator -->
                 <div class="signal-card glass">
-                    <h2>Adaptive Signal</h2>
-                    <div class="traffic-light-container">
-                        <div class="traffic-light">
-                            <div id="light-red" class="light red"></div>
-                            <div id="light-yellow" class="light yellow"></div>
-                            <div id="light-green" class="light green"></div>
+                    <h2>Coordinated Signal Controller</h2>
+                    <div class="dual-lights-grid">
+                        <!-- LANE 1 LIGHT -->
+                        <div class="light-col">
+                            <span class="light-title">LANE 1 (L)</span>
+                            <div class="traffic-light-container">
+                                <div class="traffic-light">
+                                    <div id="l1-red" class="light red"></div>
+                                    <div id="l1-yellow" class="light yellow"></div>
+                                    <div id="l1-green" class="light green"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- LANE 2 LIGHT -->
+                        <div class="light-col">
+                            <span class="light-title">LANE 2 (R)</span>
+                            <div class="traffic-light-container">
+                                <div class="traffic-light">
+                                    <div id="l2-red" class="light red"></div>
+                                    <div id="l2-yellow" class="light yellow"></div>
+                                    <div id="l2-green" class="light green"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="signal-info">
-                        <div class="state-label">State: <span id="current-state" class="fw-bold">RED</span></div>
+                        <div class="state-label">Adaptive State: <span id="current-state" class="fw-bold">L1 GREEN</span></div>
+                        <div class="state-label">Fixed State: <span id="fixed-state" class="fw-bold" style="color: var(--text-secondary);">L1 GREEN</span></div>
                         <div class="time-label">Remaining: <span id="time-left" class="fw-bold">10.0s</span></div>
                     </div>
                 </div>
 
-                <!-- Live Density Graph -->
-                <div class="graph-card glass flex-grow">
-                    <h2>Density Graph</h2>
-                    <div class="chart-container">
-                        <canvas id="densityChart"></canvas>
+                <!-- Swarm Decisions Live Feed Log -->
+                <div class="log-card glass">
+                    <h2>Swarm Optimization Logs</h2>
+                    <div class="log-box-container">
+                        <ul id="swarm-logs-list" class="swarm-logs-ul">
+                            <li class="log-li">Coordinated dual-lane swarm control active.</li>
+                        </ul>
                     </div>
                 </div>
             </section>
@@ -140,6 +223,6 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="/static/app.js?v=12"></script>
+    <script src="/static/app.js?v=108"></script>
 </body>
 </html>
